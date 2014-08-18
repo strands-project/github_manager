@@ -1,7 +1,5 @@
-from github3 import login
-import yaml
-import sys
 
+import yaml
 import argparse
 
 
