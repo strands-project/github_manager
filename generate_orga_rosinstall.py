@@ -1,23 +1,28 @@
 from github3 import login
 import yaml
+import sys
 
-token = id = ''
+import argparse
 
-CREDENTIALS_FILE = 'github.token'
 
-with open(CREDENTIALS_FILE, 'r') as fd:
-    token = fd.readline().strip()  # Can't hurt to be paranoid
-    id = fd.readline().strip()
+from github_manager import *
 
-gh = login(token=token)
+def main():
+    parser = argparse.ArgumentParser(description='queries all repositories registered for a certain github organisation and return a rosinstall compatible format.',
+                                     epilog='(c) Marc Hanheide 2014, see https://github.com/marc-hanheide/ros_gh_mgr')
+    parser.add_argument('user', help='the github user name')
+    parser.add_argument('organisation', help='the github organisation the repos should be queried for')
+    args = parser.parse_args()
 
-org = gh.organization('strands-project')
-repos = org.iter_repos('all')
+    print args.user
 
-rosinstall = []
-for r in repos:
-    entry = {'git': {'local-name': str(r.name),
-                     'uri': str(r.html_url),
-                     'version': str(r.default_branch)}}
-    rosinstall.append(entry)
-print yaml.dump(rosinstall)
+    ghm = github_manager('marc-hanheide')
+    ri = ghm.query_orga_repos('strands-project')
+    print yaml.dump(ri)
+
+
+
+
+
+if __name__ == "__main__":
+    main()
