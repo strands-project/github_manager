@@ -7,11 +7,17 @@ class github_manager:
     _gh = None
     __password = None
 
-    def __init__(self, user):
-        while not self.__password:
-            self.__password = getpass('Password for {0}: '.format(user))
+    def __init__(self, user=None, token=None):
+        if user is not None:
+            while not self.__password:
+                self.__password = getpass('Password for {0}: '.format(user))
 
-        self._gh = login(user, password=self.__password)
+            self._gh = login(user, password=self.__password)
+            return
+        if token is not None:
+            self._gh = login(token=token)
+            return
+        raise Exception('neither user name nor token succeeded')
 
 
     def query_orga_repos(self, organisation, filter='all'):
