@@ -116,6 +116,44 @@ class github_manager:
             ghm._checkout_text_files(repo, pxml,
                                      os.path.join(workspace, repo.name))
 
+    def create_repo(
+        self,
+        name,
+        organisation=None,
+        owners=None,
+        description=None
+    ):
+        if organisation is not None:
+            org = self._gh.organization(organisation)
+        else:
+            org = self._gh
+        repo = {}
+        repo['name'] = name
+        repo['description'] = description
+        repo['has_issues'] = False
+        repo['has_wiki'] = False
+        repo['has_downloads'] = False
+        repo['private'] = False
+        repo = org.create_repo(
+            name,
+            description=description,
+            has_issues=False,
+            has_wiki=False,
+            auto_init=True
+        )
+        if organisation is not None:
+            team = org.create_team(
+                name+'_admins',
+                repo_names=[organisation + '/' + name],
+                permission='admin'
+            )
+            for o in owners:
+                team.add_member(o)
+
+        else:
+            for o in owners:
+                repo.add_collaborator(o)
+            #, 'description', 'homepage', 'private', 'has_issues','has_wiki', 'has_downloads']
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -145,6 +183,24 @@ if __name__ == "__main__":
         'workspace',
         help='where to check out')
 
+    repo_parser = subparsers.add_parser(
+        'create-repo',
+        help='checkout all package.xml in all repos of an organisation')
+    repo_parser.add_argument(
+        '--organisation',
+        default=None,
+        help='organisation to create in')
+    repo_parser.add_argument(
+        '--description', '-d',
+        help='description of the repository')
+    repo_parser.add_argument(
+        '--owners', '-o',
+        default=[],
+        nargs='+',
+        help='member with access to the repository')
+    repo_parser.add_argument(
+        'name',
+        help='name of repository')
 
     github_manager.config_argparse(parser)
     args = parser.parse_args()
@@ -160,3 +216,10 @@ if __name__ == "__main__":
 
     if args.command == 'package-xml':
         ghm.checkout_all_package_xml(args.organisation, args.workspace)
+
+    if args.command == 'create-repo':
+        ghm.create_repo(
+            args.name,
+            args.organisation,
+            args.owners,
+            args.description)
