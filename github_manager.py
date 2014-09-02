@@ -2,6 +2,8 @@ from github3 import login
 from github3.repos.contents import Contents
 from getpass import getpass
 import os
+import argparse
+import yaml
 
 
 class github_manager:
@@ -10,16 +12,25 @@ class github_manager:
     __password = None
     _user = None
 
-    def __init__(self, user=None, token=None):
-        if user is not None:
-            self._user = user
-            while not self.__password:
-                self.__password = getpass('Password for {0}: '.format(user))
+    @staticmethod
+    def config_argparse(parser):
+        parser.add_argument('--user',
+                            help='the github user name', default=None)
+        parser.add_argument('--token',
+                            help='the github user name', default=None)
 
-            self._gh = login(user, password=self.__password)
+    def __init__(self, args):
+        if args.user is not None:
+            self._user = args.user
+            while not self.__password:
+                self.__password = getpass(
+                    'Password for {0}: '.format(args.user)
+                )
+
+            self._gh = login(args.user, password=self.__password)
             return
-        if token is not None:
-            self._gh = login(token=token)
+        if args.token is not None:
+            self._gh = login(token=args.token)
             return
         raise Exception('neither user name nor token succeeded')
 
@@ -107,5 +118,45 @@ class github_manager:
 
 
 if __name__ == "__main__":
-    ghm = github_manager(user='marc-hanheide')
-    ghm.checkout_all_package_xml('strands-project', '/tmp/strands-repo')
+    parser = argparse.ArgumentParser(
+        description='generate new app token for later authentication',
+        epilog='(c) Marc Hanheide 2014, see https://github.com/marc-hanheide/ros_gh_mgr'
+    )
+    subparsers = parser.add_subparsers(help='commands', dest='command')
+
+    gen_token_parser = subparsers.add_parser(
+        'gen-token',
+        help='generate a rosinstall output for all repositories of an organisation')
+
+    rosinstall_parser = subparsers.add_parser(
+        'rosinstall',
+        help='generate a rosinstall output for all repositories of an organisation')
+    rosinstall_parser.add_argument(
+        'organisation',
+        help='organisation to look for')
+
+    checkout_parser = subparsers.add_parser(
+        'package-xml',
+        help='checkout all package.xml in all repos of an organisation')
+    checkout_parser.add_argument(
+        'organisation',
+        help='organisation to look for')
+    checkout_parser.add_argument(
+        'workspace',
+        help='where to check out')
+
+
+    github_manager.config_argparse(parser)
+    args = parser.parse_args()
+    print args
+    ghm = github_manager(args)
+    if args.command == 'gen-token':
+        token = ghm.generate_app_token()
+        print token.token
+
+    if args.command == 'rosinstall':
+        ri = ghm.query_orga_repos(args.organisation)
+        print yaml.dump(ri)
+
+    if args.command == 'package-xml':
+        ghm.checkout_all_package_xml(args.organisation, args.workspace)
