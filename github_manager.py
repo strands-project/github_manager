@@ -1,6 +1,7 @@
-from github3 import login, user, authorize
+from github3 import login
 from github3.repos.contents import Contents
 from getpass import getpass
+import os
 
 
 class github_manager:
@@ -52,7 +53,8 @@ class github_manager:
 
     def get_package_xmls_from_repo(self, repo, depth):
         top_level_content = repo.contents('/')
-        return self.search_file(repo, top_level_content, 0, depth, 'package.xml')
+        return self.search_file(repo, top_level_content,
+                                0, depth, 'package.xml')
 
     def get_package_xmls(self, organisation, depth):
         org = self._gh.organization(organisation)
@@ -66,17 +68,44 @@ class github_manager:
             print res[k]
         return res
 
-    def generate_app_token(self, note = 'github_manager_app', note_url = 'https://github.com/marc-hanheide/ros_gh_mgr', scopes = ['user', 'repo']):
+    def _checkout_text_files(self, repo, files_list, dest_dir='.'):
+        for fname in files_list:
+            c = repo.contents(fname)
+
+            dn = os.path.join(dest_dir, os.path.dirname(c.path))
+            if not os.path.exists(dn):
+                os.makedirs(dn)
+            with open(os.path.join(dest_dir, fname), "w") as text_file:
+                text_file.write(c.decoded)
+
+    def generate_app_token(self,
+                           note='github_manager_app',
+                           note_url='ros_gh_mgr',
+                           scopes=['user', 'repo']):
         if self._user is None:
-            raise Exception('new tokens can only be generated when logged in using user/passwd credentials')
-        auth = self._gh.authorize(self._user, self.__password, scopes, note, note_url)
+            raise Exception('new tokens can only be generated'
+                            + 'when logged in using user/passwd credentials')
+        auth = self._gh.authorize(self._user,
+                                  self.__password,
+                                  scopes,
+                                  note,
+                                  note_url)
         return auth
+
+    def checkout_package_xml(self, repo, workspace):
+        pxml = self.get_package_xmls_from_repo(repo, 1)
+        ghm._checkout_text_files(repo, pxml, workspace)
+
+    def checkout_all_package_xml(self, orga, workspace, filter='all'):
+        org = self._gh.organization(orga)
+        repos = org.iter_repos(filter)
+        for repo in repos:
+            print "checking out package.xmls from repository " + repo.name
+            pxml = ghm.get_package_xmls_from_repo(repo, 1)
+            ghm._checkout_text_files(repo, pxml,
+                                     os.path.join(workspace, repo.name))
+
 
 if __name__ == "__main__":
     ghm = github_manager(user='marc-hanheide')
-    ri = ghm.query_orga_repos('strands-project')
-
-    org = ghm._gh.organization('strands-project')
-    repos = org.iter_repos('fork')
-    pxml = ghm.get_package_xmls('strands-project', 1)
-    print pxml
+    ghm.checkout_all_package_xml('strands-project', '/tmp/strands-repo')
