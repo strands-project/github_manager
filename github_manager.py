@@ -4,6 +4,7 @@ from getpass import getpass
 import os
 import argparse
 import yaml
+import requests
 
 
 class github_manager:
@@ -11,6 +12,8 @@ class github_manager:
     _gh = None
     __password = None
     _user = None
+    _jenkins_prefix = 'http://lcas.lincoln.ac.uk/jenkins/'
+    _ros_dist = ['hydro', 'indigo']
 
     @staticmethod
     def config_argparse(parser):
@@ -33,6 +36,13 @@ class github_manager:
             self._gh = login(token=args.token)
             return
         raise Exception('neither user name nor token succeeded')
+
+    def jenkins_job_url(self, repo_name, ros_distro):
+        return self._jenkins_prefix+'job/'+'devel-'+ros_distro+'-'+repo_name
+
+    def jenkins_job_exists(self, repo_name, ros_distro):
+        r = requests.get(self.jenkins_job_url(repo_name, ros_distro))
+        return r.status_code == 200
 
     def query_orga_repos(self, organisation, filter='all'):
         org = self._gh.organization(organisation)
@@ -155,13 +165,36 @@ class github_manager:
                 repo.add_collaborator(o)
             #, 'description', 'homepage', 'private', 'has_issues','has_wiki', 'has_downloads']
 
+    def generate_html_report(self, organisation=None, filter='all'):
+        if organisation is not None:
+            org = self._gh.organization(organisation)
+        else:
+            org = self._gh
+        repos = org.iter_repos(filter)
+        out = '<html><body><table>'
+        for repo in repos:
+            out += '<tr>'
+            out += '<td><a href="' + str(repo.html_url) + '">' + repo.name + '</a></td>'
+            out += '<td>' + repo.default_branch + '</td>'
+            for rd in self._ros_dist:
+                if self.jenkins_job_exists(str(repo.name), rd):
+                    url = str(self.jenkins_job_url(str(repo.name), rd))
+                    out += '<td><a href="' + url + '">'
+                    out += '<img src="'+url+'/badge/icon"></a></td>'
+                else:
+                    out += '<td>---</td>'
+            out += '</tr>'
+        out += '</table></body></html>'
+        return out
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='generate new app token for later authentication',
         epilog='(c) Marc Hanheide 2014, see https://github.com/marc-hanheide/ros_gh_mgr'
     )
     subparsers = parser.add_subparsers(help='commands', dest='command')
-
+    #####
     gen_token_parser = subparsers.add_parser(
         'gen-token',
         help='generate a rosinstall output for all repositories of an organisation')
@@ -172,7 +205,7 @@ if __name__ == "__main__":
     rosinstall_parser.add_argument(
         'organisation',
         help='organisation to look for')
-
+    #####
     checkout_parser = subparsers.add_parser(
         'package-xml',
         help='checkout all package.xml in all repos of an organisation')
@@ -182,7 +215,7 @@ if __name__ == "__main__":
     checkout_parser.add_argument(
         'workspace',
         help='where to check out')
-
+    #####
     repo_parser = subparsers.add_parser(
         'create-repo',
         help='checkout all package.xml in all repos of an organisation')
@@ -201,10 +234,16 @@ if __name__ == "__main__":
     repo_parser.add_argument(
         'name',
         help='name of repository')
+    #####
+    report_parser = subparsers.add_parser(
+        'report',
+        help='generate HTML report about repositories')
+    report_parser.add_argument(
+        'organisation',
+        help='organisation to look for')
 
     github_manager.config_argparse(parser)
     args = parser.parse_args()
-    print args
     ghm = github_manager(args)
     if args.command == 'gen-token':
         token = ghm.generate_app_token()
@@ -223,3 +262,7 @@ if __name__ == "__main__":
             args.organisation,
             args.owners,
             args.description)
+
+    if args.command == 'report':
+        report = ghm.generate_html_report(args.organisation)
+        print report
