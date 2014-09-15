@@ -5,6 +5,7 @@ import os
 import argparse
 import yaml
 import requests
+import time
 
 
 class github_manager:
@@ -125,6 +126,7 @@ class github_manager:
             pxml = ghm.get_package_xmls_from_repo(repo, 1)
             ghm._checkout_text_files(repo, pxml,
                                      os.path.join(workspace, repo.name))
+            time.sleep(0.2)
 
     def create_repo(
         self,
