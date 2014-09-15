@@ -100,8 +100,8 @@ class github_manager:
                 text_file.write(c.decoded)
 
     def generate_app_token(self,
-                           note='github_manager_app',
-                           note_url='ros_gh_mgr',
+                           note='github_manager',
+                           note_url='https://github.com/strands-project/github_manager',
                            scopes=['user', 'repo']):
         if self._user is None:
             raise Exception('new tokens can only be generated'
@@ -109,8 +109,8 @@ class github_manager:
         auth = self._gh.authorize(self._user,
                                   self.__password,
                                   scopes,
-                                  note,
-                                  note_url)
+                                  note=note,
+                                  note_url=note_url)
         return auth
 
     def checkout_package_xml(self, repo, workspace):
@@ -198,7 +198,20 @@ if __name__ == "__main__":
     gen_token_parser = subparsers.add_parser(
         'gen-token',
         help='generate a rosinstall output for all repositories of an organisation')
-
+    gen_token_parser.add_argument(
+        '--note',
+        default='github_manager',
+        help='note string for the app token. Default: github_manager')
+    gen_token_parser.add_argument(
+        '--note-url',
+        default='github_manager',
+        help='note url for the app token. Default: https://github.com/strands-project/github_manager')
+    gen_token_parser.add_argument(
+        '--scopes',
+        default=['user', 'repo'],
+        nargs='+',
+        help='permission scopes for the app token. Default: [\'user\', \'repo\']')
+    #####
     rosinstall_parser = subparsers.add_parser(
         'rosinstall',
         help='generate a rosinstall output for all repositories of an organisation')
@@ -246,7 +259,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ghm = github_manager(args)
     if args.command == 'gen-token':
-        token = ghm.generate_app_token()
+        token = ghm.generate_app_token(
+            note=args.note,
+            note_url=args.note_url,
+            scopes=args.scopes)
         print token.token
 
     if args.command == 'rosinstall':
