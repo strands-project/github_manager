@@ -27,8 +27,11 @@ class dependency_report_generator:
             pkg_info['licenses'] = pkg.licenses
             pkg_info['authors'] = [(a.name) for a in pkg.authors]
             pkg_info['maintainers'] = [(m.name) for m in pkg.maintainers]
+            #prefix, pkg_info['package'] = os.path.split(pkg_info['path'])
             prefix, pkg_info['package'] = os.path.split(pkg_info['path'])
             prefix, pkg_info['repo'] = os.path.split(prefix)
+            if pkg_info['repo'] in self._workspace:
+                pkg_info['repo'] = pkg_info['package']
             result[pkg.name] = pkg_info
         self._pkgs = result
 
@@ -103,7 +106,7 @@ class dependency_report_generator:
                     if within_repo and pkg['repo'] == dp['repo']:
                         dot.add_edge(pname, dpkg, constraint=True)
                     if not between_repos is None and not pkg['repo'] == dp['repo']:
-                        if pkg['repo'] in between_repos and dp['repo'] in between_repos:
+                        if pkg['repo'] in between_repos or dp['repo'] in between_repos:
                             dot.add_edge(pname, dpkg, constraint=True)
         return dot
 
