@@ -220,6 +220,10 @@ if __name__ == "__main__":
     rosinstall_parser.add_argument(
         'organisation',
         help='organisation to look for')
+    rosinstall_parser.add_argument(
+        '--filter',
+        default='all',
+        help='filter repos (either "all", "public", "member", "private", "forks", "sources")')
     #####
     checkout_parser = subparsers.add_parser(
         'package-xml',
@@ -268,7 +272,7 @@ if __name__ == "__main__":
         print token.token
 
     if args.command == 'rosinstall':
-        ri = ghm.query_orga_repos(args.organisation)
+        ri = ghm.query_orga_repos(args.organisation, filter=args.filter)
         print yaml.dump(ri)
 
     if args.command == 'package-xml':
