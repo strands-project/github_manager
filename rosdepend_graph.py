@@ -5,14 +5,29 @@ import os
 
 import pygraphviz as pgv
 
+from rosdistro import get_distribution_file, get_index, get_index_url
+
 
 class dependency_report_generator:
 
     _workspace = '.'
+    _index = None
+    _distribution = None
 
-    def __init__(self, workspace='.'):
+    def __init__(self, workspace='.', distro='hydro'):
         self._workspace = workspace
+        self._index = get_index(get_index_url())
+        self._distribution = get_distribution_file(self._index, distro)
         self._get_packages()
+
+    def _get_release_status(self, repo_name):
+        if repo_name in self._distribution.repositories:
+            r = self._distribution.repositories[repo_name]
+            if r.release_repository:
+                return 'release'
+            if r.source_repository:
+                return 'source'
+        return None
 
     def _get_packages(self):
         to = topological_order.topological_order(self._workspace)
@@ -32,6 +47,8 @@ class dependency_report_generator:
             prefix, pkg_info['repo'] = os.path.split(prefix)
             if pkg_info['repo'] in self._workspace:
                 pkg_info['repo'] = pkg_info['package']
+            if pkg_info['repo']:
+                pkg_info['release_status'] = self._get_release_status(pkg_info['repo'])
             result[pkg.name] = pkg_info
         self._pkgs = result
 
@@ -55,7 +72,20 @@ class dependency_report_generator:
         sub_graphs = self._get_repos()
 
         for k, sg in sub_graphs.items():
-            dot.add_node(k)
+            maintainers = ''
+            for pn in sg:
+                p = self._pkgs[pn]
+                for m in p['maintainers']:
+                    maintainers += '  ' + pn + ': ' + m + '<br align="left"/>'
+                if p['release_status'] is None:
+                    nc = 'red'
+                else:
+                    if p['release_status'] == 'release':
+                        nc = 'green'
+                    else:
+                        nc = 'yellow'
+                #break # it's enough to read one package of a repo...
+            dot.add_node(k, label='<<I>'+k.upper()+'</I><br align="left"/>'+maintainers+'>', color=nc)
 
         for pname, pkg in self._pkgs.items():
             for dpkg in pkg['depends']:
@@ -64,8 +94,16 @@ class dependency_report_generator:
                     #nodes.append(dpkg)
                     repo1 = pkg['repo']
                     repo2 = self._pkgs[dpkg]['repo']
+                    rs = self._pkgs[dpkg]['release_status']
                     if not repo1 == repo2:
-                        dot.add_edge(repo1, repo2, weight=10, constraint=True)
+                        if rs is None:
+                            ec = 'red'
+                        else:
+                            if rs == 'release':
+                                ec = 'green'
+                            else:
+                                ec = 'yellow'
+                        dot.add_edge(repo1, repo2, weight=10, constraint=True, color=ec)
         return dot
 
 
@@ -110,6 +148,7 @@ class dependency_report_generator:
                             dot.add_edge(pname, dpkg, constraint=True)
         return dot
 
+
     def generate_markdown(self):
         repos = self._get_repos()
         outstr = u''
@@ -138,14 +177,16 @@ class dependency_report_generator:
 
 def main():
     parser = argparse.ArgumentParser(description='find all dependencies for packages within one path prefix',
-                                     epilog='(c) Marc Hanheide 2014, see https://github.com/marc-hanheide/ros_gh_mgr')
+                                     epilog='(c) Marc Hanheide 2014, see https://github.com/marc-hanheide/ros_gh_mgr',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--mode', choices=['repo', 'pkg','markdown'], help='display on repo or package level, default is "repo"', default='repo')
-    parser.add_argument('--workspace', help='catkin workspace to parse default=\'.\'', default='.')
+    parser.add_argument('--workspace', help='catkin workspace to parse default=\'.\'', default=os.getcwd())
     parser.add_argument('--output', help='name of the generated PDF, default is output.pdf', default='output.pdf')
+    parser.add_argument('--distro', help='name of ROS distro, default: hydro', default='hydro')
     parser.add_argument('--inter-repos', nargs='+', help='show also inter-repository dependencies for these repositories in pkg mode')
     args = parser.parse_args()
 
-    drg = dependency_report_generator(args.workspace)
+    drg = dependency_report_generator(args.workspace, args.distro)
     if args.mode == 'pkg':
         dot = drg.generate_pkg_dep_graph(between_repos=args.inter_repos)
         dot.layout(prog='dot')
