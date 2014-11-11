@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from github3 import login
 from github3.repos.contents import Contents
 from getpass import getpass
@@ -7,12 +9,17 @@ import yaml
 import requests
 import time
 
+from subprocess import Popen, CalledProcessError
+
+from rosdistro import get_distribution_file, get_index, get_index_url
+
 
 class github_manager:
 
     _gh = None
     __password = None
     _user = None
+    __distribution = None
     _jenkins_prefix = 'http://lcas.lincoln.ac.uk/jenkins/'
     _ros_dist = ['hydro', 'indigo']
 
@@ -22,6 +29,39 @@ class github_manager:
                             help='the github user name', default=None)
         parser.add_argument('--token',
                             help='the github user name', default=None)
+
+    # can also be used like this:
+    # tags = call(
+    #             repo_path,
+    #             ('git', 'tag', '-l', 'debian/*'),
+    #              pipe=subprocess.PIPE)
+    def call(self, working_dir, command, pipe=None):
+        print('+ cd %s && ' % working_dir + ' '.join(command))
+        if not self.pretend:
+            process = Popen(command, stdout=pipe, stderr=pipe, cwd=working_dir)
+            output, unused_err = process.communicate()
+            retcode = process.poll()
+            if retcode:
+                raise CalledProcessError(retcode, command)
+            if pipe:
+                return output
+        else:
+            return ''
+
+    def get_distro(self, distro):
+        if self.__distribution is None:
+            try:
+                index = get_index(get_index_url())
+                self.__distribution = get_distribution_file(
+                    index,
+                    distro
+                )
+            except:
+                print "failed to get data about repo %s in distribution %s" % (self.repo_name, self.distro_name)
+                raise
+        return self.__distribution
+
+
 
     def __init__(self, args):
         if args.user is not None:
