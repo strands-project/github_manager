@@ -113,11 +113,11 @@ class CacheAnalyser:
             repo['url'], repo['version']
         )
 
-        str += '\n## `rosinstall` definition:\n'
+        str += '\n__`rosinstall` definition:__\n'
         str += '\n```\n%s```\n' % (
             self.generate_rosinstall(repo)
         )
-        str += '\n## Included Packages:\n'
+        str += '\n__included packages:__\n\n'
 
         tablehead = '| package | maintainer | authors | licence | depends on |\n'
         tableline = '| ------- | ---------- | ------- | ------- | ---------- |\n'
@@ -134,7 +134,22 @@ class CacheAnalyser:
         # outstr = u''
         # tablehead = '| package | maintainer | authors | licence | depends on |\n'
         # tableline = '| ------- | ---------- | ------- | ------- | ---------- |\n'
-        outstr = u''
+        outstr = u'# Cloning all repositories\n'
+        outstr += ('Copy the following code block into the file '
+                   '`.rosinstall` in your `src/` directory of your '
+                   'workspace and run `wstool up` to pull in all '
+                   'sources at once. An easy way to do it is '
+                   '`cat >> .rosinstall` and pasting the block below, '
+                   'followed by `[Ctrl-D]`, and then runnning `wstool up`. '
+                   'In order to the install all dependencies required '
+                   'to compile the code, simply do this in your source dir:\n'
+                   '1. `rosdep update`\n'
+                   '2. `rosdep install -i --from-paths .`\n'
+                   )
+        outstr += '\n\n```\n'
+        for repo in repos:
+            outstr += self.generate_rosinstall(repos[repo])
+        outstr += '\n```\n\n'
         for repo in repos:
             outstr += self.generate_md_repo(repos[repo])
 
