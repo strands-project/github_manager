@@ -13,17 +13,19 @@ import xml.etree.ElementTree as ET
 
 from copy import copy
 
-def dictify(r,root=True):
+
+def dictify(r, root=True):
     if root:
-        return {r.tag : dictify(r, False)}
-    d=copy(r.attrib)
+        return {r.tag: dictify(r, False)}
+    d = copy(r.attrib)
     if r.text:
-        d["_text"]=r.text
+        d["_text"] = r.text
     for x in r.findall("./*"):
         if x.tag not in d:
-            d[x.tag]=[]
-        d[x.tag].append(dictify(x,False))
+            d[x.tag] = []
+        d[x.tag].append(dictify(x, False))
     return d
+
 
 class CacheAnalyser:
 
@@ -34,12 +36,13 @@ class CacheAnalyser:
         self._pkgs = {}
         self._repos = defaultdict(set)
         self._repo_deps = defaultdict(set)
+        self._pkg2repo = defaultdict(str)
+        self._orga_url = defaultdict(str)
 
     def parse_package_xml(self, package):
         xml = self._distro.get_release_package_xml(package)
         root = ET.fromstring(xml)
         return dictify(root)
-
 
     def clean_out(self):
         for rd in self._repo_deps:
@@ -54,11 +57,14 @@ class CacheAnalyser:
             d[r] = {
                 'deps': self._repo_deps[r],
                 'name': r,
-                'url' : self._distro.repositories[r].source_repository.url,
-                'version' : self._distro.repositories[r].source_repository.version,
+                'url': self._distro.repositories[r].source_repository.url,
+                'version':
+                    self._distro.repositories[r].source_repository.version,
                 'packages_depended_on': self._repos[r],
                 'packages': {p: self._pkgs[p] for p in self._repos[r]},
-                'contained_packages': self._distro.repositories[r].release_repository.package_names
+                'contained_packages':
+                    self._distro.repositories[r]
+                    .release_repository.package_names
             }
         return d
 
@@ -67,24 +73,59 @@ class CacheAnalyser:
         self.clean_out()
         self.repo_collect()
 
-
     def generate_md_package(self, pkg):
-        str  = '  * Depends on pkgs: '
-        for d in pkg['depends']:
-            str += '[`%s`](#package-%s) ' % (d, d)
-        str += '\n'    
-        str += '  * Maintainers: %s\n' % ', '.join(pkg['package']['maintainers'])
-        str += '  * Authors: %s\n' % ', '.join(pkg['package']['authors'])
-        str += '  * License: %s\n' % pkg['package']['license']
+        str = '| [%s](apt://ros-kinetic-%s) | %s | %s | %s | %s |\n' % (
+            pkg['name'],
+            pkg['name'].replace('_', '-'),
+            ', '.join(pkg['package']['maintainers']),
+            ', '.join(pkg['package']['authors']),
+            pkg['package']['license'],
+            ', '.join(
+                ['[`%s`](#%s) ' % (d, self._pkg2repo[d])
+                    for d in pkg['depends']]
+            )
+        )
+        # str  = '  * Depends on pkgs: '
+        # for d in pkg['depends']:
+        #     str += '[`%s`](#package-%s) ' % (d, d)
+        # str += '\n'
+        # str += '  * Maintainers: %s\n' % ', '.join(pkg['package']['maintainers'])
+        # str += '  * Authors: %s\n' % ', '.join(pkg['package']['authors'])
+        # str += '  * License: %s\n' % pkg['package']['license']
+        return str
+
+    def generate_rosinstall(self, repo):
+        str = (
+            "- git:\n"
+            "    local-name: %s\n"
+            "    uri: %s\n"
+            "    version: %s\n")
+        str = str % (
+            repo['name'],
+            repo['url'],
+            repo['version']
+        )
         return str
 
     def generate_md_repo(self, repo):
-        str  = '# [%s](%s)\n' % (repo['name'], repo['url'])
-        str += '* Source Code: %s\n' % repo['url']
+        str = '---\n\n# [%s](%s)\n' % (repo['name'], repo['url'])
+        str += 'Source Code: %s (branch: %s)\n\n' % (
+            repo['url'], repo['version']
+        )
+
+        str += '\n## `rosinstall` definition:\n'
+        str += '\n```\n%s```\n' % (
+            self.generate_rosinstall(repo)
+        )
+        str += '\n## Included Packages:\n'
+
+        tablehead = '| package | maintainer | authors | licence | depends on |\n'
+        tableline = '| ------- | ---------- | ------- | ------- | ---------- |\n'
+        str += tablehead + tableline
         for p in repo['packages']:
-            str+='## Package **%s**\n*%s*\n' % (
-                p, repo['packages'][p]['package']['description']
-            )
+            # str+='## Package **%s**\n*%s*\n' % (
+            #     p, repo['packages'][p]['package']['description']
+            # )
             str+=self.generate_md_package(repo['packages'][p])
         return str
 
@@ -96,6 +137,7 @@ class CacheAnalyser:
         outstr = u''
         for repo in repos:
             outstr += self.generate_md_repo(repos[repo])
+
         return outstr
 
     def _analyse_pkg(self, pkg_name, depth=0):
@@ -107,7 +149,8 @@ class CacheAnalyser:
         repo = self._distro.repositories[pkg.repository_name]
         s = {
             'depth': depth,
-            'depends': list(deps)
+            'depends': list(deps),
+            'name': pkg_name
         }
 
         if repo.source_repository:
@@ -119,6 +162,10 @@ class CacheAnalyser:
                 'branch': repo.source_repository.version
             }
             if s['source']['orga'].lower() in self._orgas:
+                self._orga_url[s['source']['orga'].lower()] =\
+                    '/'.join(
+                        repo.source_repository.url.split('/')[:4]
+                    )
                 if repo.release_repository:
                     s['release'] = {
                     #    'repo': repo.release_repository,
@@ -149,6 +196,7 @@ class CacheAnalyser:
                                 else '')
                 }
                 self._repos[repo.name].add(pkg_name)
+                self._pkg2repo[pkg_name] = repo.name
 
                 self._pkgs[pkg_name] = s
                 for p in deps:
@@ -186,15 +234,41 @@ def main():
         default='kinetic'
     )
     parser.add_argument(
+        '--root',
+        help='name of package from which the traversal starts,'
+             ' default: iliad_restricted',
+        default='iliad_distribution'
+    )
+    parser.add_argument(
         '--orgas',
         help='list of git organisations to filter, space-separated',
-        default='lcas iliad strands-project orebrouniversity iliad-project federicopecora marc-hanheide'
+        default='lcas iliad strands-project orebrouniversity'
+                ' iliad-project federicopecora marc-hanheide'
     )
     args = parser.parse_args()
 
-    ca = CacheAnalyser(distro=args.distro, orgas=args.orgas.split(' '))
+    _orgas = args.orgas.split(' ')
+    ca = CacheAnalyser(distro=args.distro, orgas=_orgas)
     #ca.analyse('strands_apps')
-    ca.analyse_pkg('iliad_restricted')
+    ca.analyse_pkg(args.root)
+
+    ostr = ''
+    for o in _orgas:
+        if ca._orga_url[o.lower()] is not '':
+            ostr += '* [%s](%s)\n' % (
+                o,
+                ca._orga_url[o.lower()]
+            )
+
+    print ('This is an overview of repositories and packages '
+           'that form part of the `%s` distribution. Included are '
+           'all repositories and packages that `%s` depends on '
+           'and are hosted under one of the following organisations:\n'
+           '%s\n'
+           '_This page is auto-generated for ROS distribution `%s`._\n\n' %
+           (args.root, args.root, ostr, args.distro)
+           )
+
     print(ca.generate_markdown_repos())
     #pprint(ca._pkgs)
     #pprint(dict(ca._repo_deps))
