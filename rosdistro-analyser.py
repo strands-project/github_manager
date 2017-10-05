@@ -285,7 +285,7 @@ class CacheAnalyser:
             #         else:
             #             nc = 'yellow'
             #dot.add_node(k, label='<<I>'+k.upper()+'</I><br align="left"/>'+maintainers+'>', color=nc)
-            label = str('<<B>%s</B><BR ALIGN="LEFT"/>'
+            label = ('<<B>%s</B><BR ALIGN="LEFT"/>'
                         '<FONT POINT-SIZE="8">%s</FONT>>' %
                         (k.lower(), pstr))
             dot.add_node(k,
