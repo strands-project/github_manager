@@ -267,8 +267,10 @@ class CacheAnalyser:
         for k, sg in self.repos.items():
             pstr = ''
             for pname, pkg in sg['packages'].items():
-                pstr += '  <I>%s </I>(%s)<BR ALIGN="LEFT"/>' % (
-                    pname, ', '.join(pkg['package']['maintainers']))
+                # pstr += '  <I>%s </I>(%s)<BR ALIGN="LEFT"/>' % (
+                #     pname, ', '.join(pkg['package']['maintainers']))
+                pstr += '  <I>%s</I><BR ALIGN="LEFT"/>' % (
+                    pname)
             pstr += ''
             # maintainers = ''
             # for pn in sg['packages']:
