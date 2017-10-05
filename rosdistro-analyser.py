@@ -288,6 +288,8 @@ class CacheAnalyser:
             label = ('<<B>%s</B><BR ALIGN="LEFT"/>'
                         '<FONT POINT-SIZE="8">%s</FONT>>' %
                         (k.lower(), pstr))
+
+            print label
             dot.add_node(k,
                          label=label)
 
