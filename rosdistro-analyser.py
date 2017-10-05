@@ -7,6 +7,7 @@ from rosinstall_generator.distro import get_distro, get_package_names
 from rosinstall_generator.distro import get_recursive_dependencies, get_release_tag
 
 from collections import defaultdict
+import pygraphviz as pgv
 
 
 import xml.etree.ElementTree as ET
@@ -30,6 +31,7 @@ def dictify(r, root=True):
 class CacheAnalyser:
 
     def __init__(self, distro='kinetic', orgas='lcas'):
+        self._distro_name = distro
         self._distro = get_distro(distro)
         self._max_depth = 5
         self._orgas = orgas
@@ -38,6 +40,7 @@ class CacheAnalyser:
         self._repo_deps = defaultdict(set)
         self._pkg2repo = defaultdict(str)
         self._orga_url = defaultdict(str)
+        self._roots = []
 
     def parse_package_xml(self, package):
         xml = self._distro.get_release_package_xml(package)
@@ -68,10 +71,14 @@ class CacheAnalyser:
             }
         return d
 
-    def analyse_pkg(self, pkg_name):
-        self._analyse_pkg(pkg_name)
+    def analyse_pkg(self, pkg_names):
+        self._roots = pkg_names
+        for p in pkg_names:
+            self._analyse_pkg(p)
         self.clean_out()
-        self.repo_collect()
+        self.repos = self.repo_collect()
+
+        #self.repo_collect()
 
     def generate_md_package(self, pkg):
         str = '| [%s](apt://ros-kinetic-%s) | %s | %s | %s | %s |\n' % (
@@ -130,12 +137,27 @@ class CacheAnalyser:
         return str
 
     def generate_markdown_repos(self):
-        repos = self.repo_collect()
+        repos = self.repos
         # outstr = u''
         # tablehead = '| package | maintainer | authors | licence | depends on |\n'
         # tableline = '| ------- | ---------- | ------- | ------- | ---------- |\n'
-        outstr = u'# Cloning all repositories\n'
-        outstr += ('Copy the following code block into the file '
+        outstr = u''
+        outstr += ('\n'
+                   '## Install released packages\n'
+                   'See the [documentation]'
+                   '(https://github.com/LCAS/rosdistro/wiki'
+                   '#using-the-l-cas-repository-if-you-'
+                   'just-want-to-use-our-software) '
+                   'to enable the Ubuntu repositories to be ready to '
+                   'install binary releases. '
+                   'To install all packages documented here, '
+                   'simply run \n\n```\n'
+                   'sudo apt install %s\n```\n\n'
+                   'after having enabled the repositories.\n\n'
+                   % ' '.join(self._roots))
+        outstr += ('\n'
+                   '## Cloning all repositories\n'
+                   'Copy the following code block into the file '
                    '`.rosinstall` in your `src/` directory of your '
                    'workspace and run `wstool up` to pull in all '
                    'sources at once. An easy way to do it is '
@@ -150,6 +172,7 @@ class CacheAnalyser:
         for repo in repos:
             outstr += self.generate_rosinstall(repos[repo])
         outstr += '\n```\n\n'
+
         for repo in repos:
             outstr += self.generate_md_repo(repos[repo])
 
@@ -232,6 +255,83 @@ class CacheAnalyser:
             #get_recursive_dependencies(self._distro, ['strands_apps'], source=True)
         )
 
+    def generate_repo_dep_graph(self):
+        dot = pgv.AGraph(label="<<B>Dependency Graph of Repositories</B>>",
+                         directed=True,
+                         strict=True,
+                         splines='True',
+                         compound=True,
+                         rankdir='TB',
+                         concentrate=False)
+
+        for k, sg in self.repos.items():
+            pstr = ''
+            for pname, pkg in sg['packages'].items():
+                pstr += '  <I>%s </I>(%s)<BR ALIGN="LEFT"/>' % (
+                    pname, ', '.join(pkg['package']['maintainers']))
+            pstr += ''
+            # maintainers = ''
+            # for pn in sg['packages']:
+            #     p = sg['packages']
+            #     for m in p['maintainers']:
+            #         maintainers += '  ' + pn + ': ' + m + '<br align="left"/>'
+            #     if p['release_status'] is None:
+            #         nc = 'red'
+            #     else:
+            #         if p['release_status'] == 'release':
+            #             nc = 'green'
+            #         else:
+            #             nc = 'yellow'
+            #dot.add_node(k, label='<<I>'+k.upper()+'</I><br align="left"/>'+maintainers+'>', color=nc)
+            label = str('<<B>%s</B><BR ALIGN="LEFT"/>'
+                        '<FONT POINT-SIZE="8">%s</FONT>>' %
+                        (k.lower(), pstr))
+            dot.add_node(k,
+                         label=label)
+
+            for dr in sg['deps']:
+                dot.add_edge(k, dr, weight=10, constraint=True)
+
+        # for pname, pkg in self._pkgs.items():
+        #     for dpkg in pkg['depends']:
+        #         if dpkg in self._pkgs:
+        #             #dot.node(dpkg)
+        #             #nodes.append(dpkg)
+        #             repo1 = pkg['repo']
+        #             repo2 = self._pkgs[dpkg]['repo']
+        #             rs = self._pkgs[dpkg]['release_status']
+        #             if not repo1 == repo2:
+        #                 if rs is None:
+        #                     ec = 'red'
+        #                 else:
+        #                     if rs == 'release':
+        #                         ec = 'green'
+        #                     else:
+        #                         ec = 'yellow'
+        #                 dot.add_edge(repo1, repo2, weight=10, constraint=True, color=ec)
+        return dot
+
+    def preamble(self):
+        ostr = ''
+        for o in self._orgas:
+            if self._orga_url[o.lower()] is not '':
+                ostr += '* [%s](%s)\n' % (
+                    o,
+                    self._orga_url[o.lower()]
+                )
+
+        return ('This is an overview of repositories and packages '
+                'that form part of the distribution. Included are '
+                'all repositories and packages that are '
+                'hosted under one of the following organisations:\n'
+                '%s\n'
+                '_This page is autogenerated for ROS distribution `%s`._\n'
+                '\n'
+                '![repos](repos.svg)' %
+                (ostr, self._distro_name)
+                )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='analyse a rosdistro',
@@ -263,27 +363,16 @@ def main():
     args = parser.parse_args()
 
     _orgas = args.orgas.split(' ')
+    _roots = args.root.split(' ')
     ca = CacheAnalyser(distro=args.distro, orgas=_orgas)
     #ca.analyse('strands_apps')
-    ca.analyse_pkg(args.root)
+    ca.analyse_pkg(_roots)
 
-    ostr = ''
-    for o in _orgas:
-        if ca._orga_url[o.lower()] is not '':
-            ostr += '* [%s](%s)\n' % (
-                o,
-                ca._orga_url[o.lower()]
-            )
+    dot = ca.generate_repo_dep_graph()
+    dot.layout(prog='dot')
+    dot.draw('repos.svg')
 
-    print ('This is an overview of repositories and packages '
-           'that form part of the `%s` distribution. Included are '
-           'all repositories and packages that `%s` depends on '
-           'and are hosted under one of the following organisations:\n'
-           '%s\n'
-           '_This page is auto-generated for ROS distribution `%s`._\n\n' %
-           (args.root, args.root, ostr, args.distro)
-           )
-
+    print(ca.preamble())
     print(ca.generate_markdown_repos())
     #pprint(ca._pkgs)
     #pprint(dict(ca._repo_deps))
