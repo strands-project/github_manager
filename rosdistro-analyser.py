@@ -154,7 +154,7 @@ class CacheAnalyser:
                    'simply run \n\n```\n'
                    'sudo apt install %s\n```\n\n'
                    'after having enabled the repositories.\n\n'
-                   % ' '.join(self._roots))
+                   % ' '.join([('ros-kinetic-%s' % s.replace('_','-')) for s in self._roots]))
         outstr += ('\n'
                    '## Cloning all repositories\n'
                    'Copy the following code block into the file '
