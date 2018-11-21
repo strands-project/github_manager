@@ -81,8 +81,9 @@ class CacheAnalyser:
         #self.repo_collect()
 
     def generate_md_package(self, pkg):
-        str = '| [%s](apt://ros-kinetic-%s) | %s | %s | %s | %s |\n' % (
+        str = '| [`%s`](apt://ros-kinetic-%s): _%s_ | %s | %s | %s | %s |\n' % (
             pkg['name'],
+            pkg['description'],
             pkg['name'].replace('_', '-'),
             ', '.join(pkg['package']['maintainers']),
             ', '.join(pkg['package']['authors']),
