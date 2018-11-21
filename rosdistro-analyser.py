@@ -84,7 +84,7 @@ class CacheAnalyser:
         str = '| [`%s`](apt://ros-kinetic-%s): _%s_ | %s | %s | %s | %s |\n' % (
             pkg['name'],
             pkg['name'].replace('_', '-'),
-            pkg['description'],
+            pkg['package']['description'],
             ', '.join(pkg['package']['maintainers']),
             ', '.join(pkg['package']['authors']),
             pkg['package']['license'],
