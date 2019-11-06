@@ -32,7 +32,7 @@ def dictify(r, root=True):
 
 class CacheAnalyser:
 
-    def __init__(self, distro='kinetic', orgas='lcas', tags=['lcas']):
+    def __init__(self, distro='kinetic', orgas=['lcas'], tags=['lcas']):
         self._distro_name = distro
         self._distro = get_distro(distro)
         self._max_depth = 5
@@ -85,7 +85,6 @@ class CacheAnalyser:
         self._roots = pkg_names
         if not pkg_names:
             pkg_names = set(self._distribution.release_packages)
-
         for p in pkg_names:
             self._analyse_pkg(p)
         self.clean_out()
@@ -388,7 +387,7 @@ def main():
     _orgas = args.orgas.split(' ') if len(args.orgas)>0 else []
     _roots = args.root.split(' ') if len(args.root)>0 else []
     _tags = args.tags.split(' ') if len(args.tags)>0 else []
-    #print _tags
+    #print _orgas
     ca = CacheAnalyser(distro=args.distro, orgas=_orgas, tags=_tags)
     #ca.analyse('strands_apps')
     #print(get_package_names(ca._distro))
