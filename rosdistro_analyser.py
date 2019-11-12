@@ -331,7 +331,7 @@ class CacheAnalyser:
         ostr = ''
         for o in self._orgas:
             if self._orga_url[o.lower()] is not '':
-                ostr += '* [%s](%s)\n' % (
+                ostr += '[%s](%s) ' % (
                     o,
                     self._orga_url[o.lower()]
                 )
