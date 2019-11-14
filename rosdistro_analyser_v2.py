@@ -108,13 +108,20 @@ class CacheAnalyser:
         self.rep_required_by_graph = Graph()                
 
     def _analyse_repos(self):
-        for r, sg in self._repositories.items():
-            if sg.release_repository is not None:  # released
-                self._released_repos[r] = self._analyse_released_repo(sg)
-                self._released_pkgs.update(self._released_repos[r])
-            elif sg.source_repository is not None:  # not released but source available
-                self._non_released_repos[r] = sg
-        pprint(self._released_pkgs) 
+        tmp_dir = mkdtemp()
+        try:
+            for r, sg in self._repositories.items():
+                if sg.release_repository is not None:  # released
+                    self._released_repos[r] = self._analyse_released_repo(sg)
+                    self._released_pkgs.update(self._released_repos[r])
+                elif sg.source_repository is not None:  # not released but source available
+                    self._non_released_repos[r] = self._analyse_non_released_repo(sg, tmp_dir)
+                    pprint(self._non_released_repos[r])
+                    #break  # FOR DEBUG ONLY
+
+        finally:
+            rmtree(tmp_dir)
+        pprint(self._released_pkgs)         
 
     def _extract_from_package_xml(self, px):
         return {
@@ -144,7 +151,7 @@ class CacheAnalyser:
             deps = get_recursive_dependencies(self._distro, [p], limit_depth=1)
             e = {
                 'name': p,
-                'deps': deps,  # only keep the ones in our repo file
+                'deps': deps,  
                 'repository': self._distribution.release_packages[p].repository_name
             }
             px = self.parse_package_xml(p)['package']
@@ -168,40 +175,35 @@ class CacheAnalyser:
             return _pkg
 
     def _analyse_non_released_repo(self, sg, tmp_dir):
-        deps = {}
-        rep2pkg = {}
-        rep2pkg_names = {}
-        pkg2rep = {}
-        all_pkg = []
-        _pkg={}
+        _pkgs={}
 
         try:
-            __checkout(
+            self.__checkout(
                 sg.source_repository.url,
                 sg.source_repository.version,
-                k, tmp_dir)
-            rep2pkg[k] = [
+                sg.name, tmp_dir)
+            pkgs = [
                 p[1] for p in topological_order.topological_order(
-                join(tmp_dir, k))]
-            rep2pkg_names[k] = [p.name for p in rep2pkg[k]]
-            for p in rep2pkg_names[k]:
-                pkg2rep[p] = k
-            all_pkg.extend(rep2pkg[k])
-            break  # FOR DEBUG ONLY
+                    join(tmp_dir, sg.name))
+                    ]
+            pkgs_names = [p.name for p in pkgs]
         except Exception as e:
             print(str(e))
-            continue
+            return
 
-            for pkg in all_pkg:
-                deps[pkg.name] = set([str(d.name) for d in pkg.build_depends]
-                                      + [str(d.name) for d in pkg.exec_depends])
-                # remove all dependencies in the same repository
-                pkg_repo = pkg2rep[pkg.name]
-                deps[pkg.name] = list(deps[pkg.name].difference(rep2pkg_names[pkg_repo]))
-            pprint(deps)
-        finally:
-            rmtree(tmp_dir)
-
+        for pkg in pkgs:
+            e = {
+                'name': pkg.name,
+                'deps': set([str(d.name) for d in pkg.build_depends]
+                            + [str(d.name) for d in pkg.exec_depends]),
+                'repository': sg.name,
+                'authors': [str(a.name) for a in pkg.authors],
+                'maintainers': [str(a.name) for a in pkg.maintainers],
+                'license': ', '.join(pkg.licenses)
+            }
+            _pkgs[pkg.name] = e 
+        
+        return _pkgs
 
 ####################
 
@@ -421,7 +423,7 @@ class CacheAnalyser:
             #get_recursive_dependencies(self._distro, ['strands_apps'], source=True)
         )
 
-    def __checkout(url, branch, name, dir):
+    def __checkout(self, url, branch, name, dir):
         check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
 
 
