@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
-from pprint import pprint
+from pprint import pprint, pformat
 from sys import stderr
 from shutil import rmtree
 
@@ -21,6 +21,52 @@ from copy import copy
 from catkin_pkg import topological_order
 
 
+class Graph: 
+    def __init__(self): 
+        self.graph = defaultdict(set) #dictionary containing adjacency List 
+        #self.V = vertices #No. of vertices 
+
+    def __str__(self):
+        return pformat(dict(self.graph))
+  
+    # function to add an edge to graph 
+    def addEdge(self,u,v): 
+        self.graph[u].add(v) 
+  
+    # A recursive function used by topologicalSort 
+    def topologicalSortUtil(self,v,visited,stack, level): 
+  
+        # Mark the current node as visited. 
+        visited[v] = level
+        # Recur for all the vertices adjacent to this vertex 
+        if v in self.graph:
+            for i in self.graph[v]: 
+                if visited[i] < 0: 
+                    self.topologicalSortUtil(i,visited,stack, level + 1) 
+  
+        # Push current vertex to stack which stores result 
+        stack.insert(0,v) 
+  
+    # The function to do Topological Sort. It uses recursive  
+    # topologicalSortUtil() 
+    def topologicalSort(self): 
+        # Mark all the vertices as not visited 
+        visited = defaultdict(lambda: -1)
+        #for v in self.graph: 
+        #    visited[v] = False
+        stack =[] 
+  
+        # Call the recursive helper function to store Topological 
+        # Sort starting from all vertices one by one 
+        for i in self.graph: 
+            if visited[i] < 0 and i in self.graph: 
+                self.topologicalSortUtil(i,visited,stack,1) 
+  
+        # Print contents of stack 
+        return stack , visited
+
+
+
 def dictify(r, root=True):
     if root:
         return {r.tag: dictify(r, False)}
@@ -36,25 +82,128 @@ def dictify(r, root=True):
 
 class CacheAnalyser:
 
-    def __init__(self, distro='kinetic', orgas=['lcas'], tags=['lcas']):
+    def __init__(self, distro='kinetic', tags=['lcas']):
         self._distro_name = distro
         self._distro = get_distro(distro)
-        self._max_depth = 5
-        self._orgas = orgas
         self._pkgs = {}
-        self._repos = defaultdict(set)
-        self._repo_deps = defaultdict(set)
-        self._pkg2repo = defaultdict(str)
-        self._orga_url = defaultdict(str)
-        self._roots = []
+        self._released_repos = {}
+        self._non_released_repos = {}
+        self._released_pkgs = {}
+        self._non_released_pkgs = {}
+        self._repo_deps = {}
+        self._pkg2repo = defaultdict(lambda: None)
         self._index = get_index(get_index_url())
         self._distributions = get_distribution_files(self._index, distro)
+
         self._distribution = None
         for d in self._distributions:
             if set(d.tags).intersection(set(tags)):
                 self._distribution = d
                 break
+        self._repositories = self._distribution.repositories
+        self._released_packages_set = set(self._distribution.release_packages)
+        self.pkg_requires_graph = Graph()
+        self.rep_requires_graph = Graph()                
+        self.pkg_required_by_graph = Graph()
+        self.rep_required_by_graph = Graph()                
 
+    def _analyse_repos(self):
+        for r, sg in self._repositories.items():
+            if sg.release_repository is not None:  # released
+                self._released_repos[r] = self._analyse_released_repo(sg)
+                self._released_pkgs.update(self._released_repos[r])
+            elif sg.source_repository is not None:  # not released but source available
+                self._non_released_repos[r] = sg
+        pprint(self._released_pkgs) 
+
+    def _extract_from_package_xml(self, px):
+        return {
+            'authors': ([a['_text']
+                            for a in px['author']]
+                        if 'author' in px
+                        else ''),
+            'maintainers': ([a['_text']
+                                for a in px['maintainer']]
+                            if 'maintainer' in px
+                            else ''),
+            'description': (' '.join(
+                            [a['_text']
+                                for a in px['description']])
+                            if 'description' in px
+                            else ''),
+            'license': (' '.join(
+                            [a['_text']
+                                for a in px['license']])
+                        if 'license' in px
+                        else '')
+        }
+
+    def _analyse_released_repo(self, sg):
+        _pkg={}
+        for p in sg.release_repository.package_names:
+            deps = get_recursive_dependencies(self._distro, [p], limit_depth=1)
+            e = {
+                'name': p,
+                'deps': deps,  # only keep the ones in our repo file
+                'repository': self._distribution.release_packages[p].repository_name
+            }
+            px = self.parse_package_xml(p)['package']
+            e.update(self._extract_from_package_xml(px))
+
+
+            _pkg[p] = e 
+            # only create graph for packages in this distribution
+            for d in deps.intersection(self._released_packages_set):
+                self.pkg_requires_graph.addEdge(p, d)
+                self.pkg_required_by_graph.addEdge(d, p)
+                if self._distribution.release_packages[d].repository_name != self._distribution.release_packages[p].repository_name:
+                    self.rep_requires_graph.addEdge(
+                        self._distribution.release_packages[p].repository_name,
+                        self._distribution.release_packages[d].repository_name,
+                    )
+                    self.rep_required_by_graph.addEdge(
+                        self._distribution.release_packages[d].repository_name,
+                        self._distribution.release_packages[p].repository_name,
+                    )
+            return _pkg
+
+    def _analyse_non_released_repo(self, sg, tmp_dir):
+        deps = {}
+        rep2pkg = {}
+        rep2pkg_names = {}
+        pkg2rep = {}
+        all_pkg = []
+        _pkg={}
+
+        try:
+            __checkout(
+                sg.source_repository.url,
+                sg.source_repository.version,
+                k, tmp_dir)
+            rep2pkg[k] = [
+                p[1] for p in topological_order.topological_order(
+                join(tmp_dir, k))]
+            rep2pkg_names[k] = [p.name for p in rep2pkg[k]]
+            for p in rep2pkg_names[k]:
+                pkg2rep[p] = k
+            all_pkg.extend(rep2pkg[k])
+            break  # FOR DEBUG ONLY
+        except Exception as e:
+            print(str(e))
+            continue
+
+            for pkg in all_pkg:
+                deps[pkg.name] = set([str(d.name) for d in pkg.build_depends]
+                                      + [str(d.name) for d in pkg.exec_depends])
+                # remove all dependencies in the same repository
+                pkg_repo = pkg2rep[pkg.name]
+                deps[pkg.name] = list(deps[pkg.name].difference(rep2pkg_names[pkg_repo]))
+            pprint(deps)
+        finally:
+            rmtree(tmp_dir)
+
+
+####################
 
     def parse_package_xml(self, package):
         xml = self._distro.get_release_package_xml(package)
@@ -272,51 +421,12 @@ class CacheAnalyser:
             #get_recursive_dependencies(self._distro, ['strands_apps'], source=True)
         )
 
-    def analyse_non_released_repos(self):
-        def __checkout(url, branch, name, dir):
-            check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
-
-        tmp_dir = mkdtemp()
-        deps = {}
-        rep2pkg = {}
-        rep2pkg_names = {}
-        pkg2rep = {}
-        all_pkg = []
-
-        try:
-            for k, sg in self._distribution.repositories.items():
-                #print sg.__dict__
-                # if not released but source available, check it out and go over all
-                # the packages within
-                if sg.release_repository is None and sg.source_repository is not None:  # not released
-                    try:
-                        __checkout(
-                            sg.source_repository.url,
-                            sg.source_repository.version,
-                            k, tmp_dir)
-                        rep2pkg[k] = [
-                            p[1] for p in topological_order.topological_order(
-                            join(tmp_dir, k))]
-                        rep2pkg_names[k] = [p.name for p in rep2pkg[k]]
-                        for p in rep2pkg_names[k]:
-                            pkg2rep[p] = k
-                        all_pkg.extend(rep2pkg[k])
-                        break  # FOR DEBUG ONLY
-                    except Exception as e:
-                        print(str(e))
-                        continue
-            for pkg in all_pkg:
-                deps[pkg.name] = set([str(d.name) for d in pkg.build_depends]
-                                      + [str(d.name) for d in pkg.exec_depends])
-                # remove all dependencies in the same repository
-                pkg_repo = pkg2rep[pkg.name]
-                deps[pkg.name] = list(deps[pkg.name].difference(rep2pkg_names[pkg_repo]))
-            pprint(deps)
-        finally:
-            rmtree(tmp_dir)
+    def __checkout(url, branch, name, dir):
+        check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
 
 
-    def generate_repo_dep_graph(self):
+
+    def generate_repo_requires_graph(self):
         dot = pgv.AGraph(label="<<B>Dependency Graph of Repositories</B>>",
                          directed=True,
                          strict=True,
@@ -407,26 +517,9 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        '--mode', choices=['repo', 'pkg', 'markdown'],
-        help='display on repo or package level, default is "repo"',
-        default='repo'
-    )
-    parser.add_argument(
         '--distro',
         help='name of ROS distro, default: kinetic',
         default='kinetic'
-    )
-    parser.add_argument(
-        '--root',
-        help='name of package from which the traversal starts,'
-             ' default: empty (all)',
-        default=''
-    )
-    parser.add_argument(
-        '--orgas',
-        help='list of git organisations to filter, space-separated',
-        default='lcas iliad strands-project orebrouniversity'
-                ' iliad-project federicopecora marc-hanheide'
     )
     parser.add_argument(
         '--tags',
@@ -435,18 +528,17 @@ def main():
     )
     args = parser.parse_args()
 
-    _orgas = args.orgas.split(' ') if len(args.orgas)>0 else []
-    _roots = args.root.split(' ') if len(args.root)>0 else []
     _tags = args.tags.split(' ') if len(args.tags)>0 else []
     #print _orgas
-    ca = CacheAnalyser(distro=args.distro, orgas=_orgas, tags=_tags)
-    ca.analyse_non_released_repos()
+    ca = CacheAnalyser(distro=args.distro, tags=_tags)
+    ca._analyse_repos()
+    #ca.analyse_non_released_repos()
     return
     #ca.analyse('strands_apps')
     #print(get_package_names(ca._distro))
     ca.analyse_pkg(_roots)
 
-    dot = ca.generate_repo_dep_graph()
+    dot = ca.generate_repo_requires_graph()
     dot.layout(prog='dot')
     dot.draw('repos-%s.png' % args.distro)
     dot.draw('repos-%s.pdf' % args.distro)
