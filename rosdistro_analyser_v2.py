@@ -86,10 +86,30 @@ class CacheAnalyser:
         self._distro_name = distro
         self._distro = get_distro(distro)
         self._pkgs = {}
-        self._released_repos = {}
-        self._non_released_repos = {}
-        self._released_pkgs = {}
-        self._non_released_pkgs = {}
+        __repo_template = {
+            'packages': {},
+            'type': 'git',
+            'url': None,
+            'version': 'master',
+            'requires_repositories': set([]),
+            'required_by_repositories': set([]),
+            'status': 'unknown',
+            'jenkins_job': None
+        }
+        __pkg_template = {
+            'name': None,
+            'authors': [],
+            'maintainers': [],
+            'description': '',
+            'license': 'unknown',
+            'status': 'unknown',
+            'deps': set([]),
+            'repository': None
+        }
+        self._repositories = defaultdict(lambda: dict(__repo_template))
+        self._pkgs = defaultdict(lambda: dict(__pkg_template))
+
+
         self._repo_deps = {}
         self._pkg2repo = defaultdict(lambda: None)
         self._index = get_index(get_index_url())
@@ -100,7 +120,17 @@ class CacheAnalyser:
             if set(d.tags).intersection(set(tags)):
                 self._distribution = d
                 break
-        self._repositories = self._distribution.repositories
+        # find only the first release platform and assume it's the right one...
+        self._release_platform = self._distribution.release_platforms['ubuntu'][0]
+        self.__jenkins_url_template_dev = (
+            'https://lcas.lincoln.ac.uk/buildfarm/job/%sdev__%%s__ubuntu_%s_amd64/'
+            % (
+                self._distro_name[0].upper(),
+                self._release_platform
+                )
+            )
+
+        self._distro_repositories = self._distribution.repositories
         self._released_packages_set = set(self._distribution.release_packages)
         self.pkg_requires_graph = Graph()
         self.rep_requires_graph = Graph()                
@@ -110,18 +140,29 @@ class CacheAnalyser:
     def _analyse_repos(self):
         tmp_dir = mkdtemp()
         try:
-            for r, sg in self._repositories.items():
-                if sg.release_repository is not None:  # released
-                    self._released_repos[r] = self._analyse_released_repo(sg)
-                    self._released_pkgs.update(self._released_repos[r])
-                elif sg.source_repository is not None:  # not released but source available
-                    self._non_released_repos[r] = self._analyse_non_released_repo(sg, tmp_dir)
-                    pprint(self._non_released_repos[r])
-                    #break  # FOR DEBUG ONLY
+            for r, sg in self._distro_repositories.items():
+                try:
+                    if sg.release_repository is not None:  # released
+                        self._repositories[r]['packages'] = self._analyse_released_repo(sg)
+                        self._repositories[r]['status'] = 'released'
+                    elif sg.source_repository is not None:  # not released but source available
+                        self._repositories[r]['packages'] = self._analyse_non_released_repo(sg, tmp_dir)
+                        self._repositories[r]['status'] = 'source'
+                    if sg.source_repository:
+                        self._repositories[r]['type'] = sg.source_repository.type
+                        self._repositories[r]['url'] = sg.source_repository.url
+                        self._repositories[r]['version'] = sg.source_repository.version
+                        self._repositories[r]['jenkins_job'] = self.__jenkins_url_template_dev % (
+                            r
+                        )
+                        
+                    self._pkgs.update(self._repositories[r]['packages'])
+                except Exception  as e:
+                    print "skipping %s as exception occured: %s" % (r, str(e))
 
         finally:
             rmtree(tmp_dir)
-        pprint(self._released_pkgs)         
+        pprint(dict(self._repositories))
 
     def _extract_from_package_xml(self, px):
         return {
@@ -151,6 +192,7 @@ class CacheAnalyser:
             deps = get_recursive_dependencies(self._distro, [p], limit_depth=1)
             e = {
                 'name': p,
+                'status': 'released',
                 'deps': deps,  
                 'repository': self._distribution.release_packages[p].repository_name
             }
@@ -194,6 +236,7 @@ class CacheAnalyser:
         for pkg in pkgs:
             e = {
                 'name': pkg.name,
+                'status': 'source',
                 'deps': set([str(d.name) for d in pkg.build_depends]
                             + [str(d.name) for d in pkg.exec_depends]),
                 'repository': sg.name,
@@ -204,6 +247,10 @@ class CacheAnalyser:
             _pkgs[pkg.name] = e 
         
         return _pkgs
+
+    def __checkout(self, url, branch, name, dir):
+        check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
+
 
 ####################
 
@@ -422,10 +469,6 @@ class CacheAnalyser:
             unreleased_names
             #get_recursive_dependencies(self._distro, ['strands_apps'], source=True)
         )
-
-    def __checkout(self, url, branch, name, dir):
-        check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
-
 
 
     def generate_repo_requires_graph(self):
