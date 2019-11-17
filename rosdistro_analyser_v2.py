@@ -4,6 +4,7 @@ import argparse
 from pprint import pprint, pformat
 from sys import stderr
 from shutil import rmtree
+from copy import deepcopy
 
 from rosinstall_generator.distro import get_distro, get_package_names
 from rosinstall_generator.distro import get_recursive_dependencies, get_release_tag
@@ -13,6 +14,7 @@ import pygraphviz as pgv
 
 from rosdistro import get_distribution_files, get_index, get_index_url
 from tempfile import mkdtemp
+from logging import info, basicConfig, exception, warning, INFO
 
 import xml.etree.ElementTree as ET
 from subprocess import check_call
@@ -93,6 +95,8 @@ class CacheAnalyser:
             'version': 'master',
             'requires_repositories': set([]),
             'required_by_repositories': set([]),
+            'external_dependencies': set([]),
+            'internal_dependencies': set([]),
             'status': 'unknown',
             'jenkins_job': None
         }
@@ -106,8 +110,8 @@ class CacheAnalyser:
             'deps': set([]),
             'repository': None
         }
-        self._repositories = defaultdict(lambda: dict(__repo_template))
-        self._pkgs = defaultdict(lambda: dict(__pkg_template))
+        self._repositories = defaultdict(lambda: deepcopy(__repo_template))
+        self._pkgs = defaultdict(lambda: deepcopy(__pkg_template))
 
 
         self._repo_deps = {}
@@ -142,27 +146,50 @@ class CacheAnalyser:
         try:
             for r, sg in self._distro_repositories.items():
                 try:
-                    if sg.release_repository is not None:  # released
+                    info('analysing repository %s' % r)
+                    if sg.release_repository:  # released
                         self._repositories[r]['packages'] = self._analyse_released_repo(sg)
                         self._repositories[r]['status'] = 'released'
-                    elif sg.source_repository is not None:  # not released but source available
-                        self._repositories[r]['packages'] = self._analyse_non_released_repo(sg, tmp_dir)
-                        self._repositories[r]['status'] = 'source'
+                        info('  repository %s is released with packages %s' % (
+                            r, pformat(list(self._repositories[r]['packages']))))
+                    elif sg.source_repository:  # not released but source available
+                        if sg.source_repository.type == 'git':
+                            self._repositories[r]['packages'] = self._analyse_non_released_repo(sg, tmp_dir)
+                            self._repositories[r]['status'] = 'source'
+                            info('  repository %s is non-released with packages %s' % (
+                                r, pformat(list(self._repositories[r]['packages']))))
+                        else:
+                            warning('skipping source repository %s as it is not git' % r)
                     if sg.source_repository:
                         self._repositories[r]['type'] = sg.source_repository.type
                         self._repositories[r]['url'] = sg.source_repository.url
                         self._repositories[r]['version'] = sg.source_repository.version
-                        self._repositories[r]['jenkins_job'] = self.__jenkins_url_template_dev % (
-                            r
-                        )
+                        self._repositories[r]['jenkins_job'] = self.__jenkins_url_template_dev % r
                         
                     self._pkgs.update(self._repositories[r]['packages'])
                 except Exception  as e:
-                    print "skipping %s as exception occured: %s" % (r, str(e))
+                    exception("skipping %s as exception occured" % r)
 
         finally:
             rmtree(tmp_dir)
-        pprint(dict(self._repositories))
+        self._analyse_deps()
+        info(pformat(dict(self._repositories)))
+
+    def _analyse_deps(self):
+        for p in self._pkgs:
+            pkg = self._pkgs[p]
+            repo = pkg['repository']
+            info('analyse dependencies for package %s' % p)
+            internal_deps = pkg['deps'].intersection(set(self._pkgs))
+            external_deps = pkg['deps'].difference(set(self._pkgs))
+            for d in internal_deps:
+                dep_repo = self._pkgs[d]['repository']
+                if repo != dep_repo:  # ignore self-dep
+                    self._repositories[dep_repo]['required_by_repositories'].add(repo)
+                    self._repositories[repo]['requires_repositories'].add(dep_repo)
+                    self._repositories[repo]['internal_dependencies'].update(internal_deps)
+
+            self._repositories[repo]['external_dependencies'].update(external_deps)
 
     def _extract_from_package_xml(self, px):
         return {
@@ -188,6 +215,7 @@ class CacheAnalyser:
 
     def _analyse_released_repo(self, sg):
         _pkg={}
+
         for p in sg.release_repository.package_names:
             deps = get_recursive_dependencies(self._distro, [p], limit_depth=1)
             e = {
@@ -214,7 +242,7 @@ class CacheAnalyser:
                         self._distribution.release_packages[d].repository_name,
                         self._distribution.release_packages[p].repository_name,
                     )
-            return _pkg
+        return _pkg
 
     def _analyse_non_released_repo(self, sg, tmp_dir):
         _pkgs={}
@@ -229,8 +257,8 @@ class CacheAnalyser:
                     join(tmp_dir, sg.name))
                     ]
             pkgs_names = [p.name for p in pkgs]
-        except Exception as e:
-            print(str(e))
+        except Exception:
+            exception('exception when trying to analyse repository %s' % sg.name)
             return
 
         for pkg in pkgs:
@@ -249,7 +277,9 @@ class CacheAnalyser:
         return _pkgs
 
     def __checkout(self, url, branch, name, dir):
-        check_call(["git", "clone", '--depth', '1', '-b', branch, url, name], cwd=dir)
+        check_call(["git", "clone", '--depth', '1', 
+            '--shallow-submodules', '--recurse-submodules',
+            '-b', branch, url, name], cwd=dir)
 
 
 ####################
@@ -595,5 +625,6 @@ def main():
     #pprint(dict(ca._repos))
 
 if __name__ == "__main__":
+    basicConfig(level=INFO)
     main()
 
