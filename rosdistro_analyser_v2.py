@@ -23,51 +23,6 @@ from copy import copy
 from catkin_pkg import topological_order
 
 
-class Graph: 
-    def __init__(self): 
-        self.graph = defaultdict(set) #dictionary containing adjacency List 
-        #self.V = vertices #No. of vertices 
-
-    def __str__(self):
-        return pformat(dict(self.graph))
-  
-    # function to add an edge to graph 
-    def addEdge(self,u,v): 
-        self.graph[u].add(v) 
-  
-    # A recursive function used by topologicalSort 
-    def topologicalSortUtil(self,v,visited,stack, level): 
-  
-        # Mark the current node as visited. 
-        visited[v] = level
-        # Recur for all the vertices adjacent to this vertex 
-        if v in self.graph:
-            for i in self.graph[v]: 
-                if visited[i] < 0: 
-                    self.topologicalSortUtil(i,visited,stack, level + 1) 
-  
-        # Push current vertex to stack which stores result 
-        stack.insert(0,v) 
-  
-    # The function to do Topological Sort. It uses recursive  
-    # topologicalSortUtil() 
-    def topologicalSort(self): 
-        # Mark all the vertices as not visited 
-        visited = defaultdict(lambda: -1)
-        #for v in self.graph: 
-        #    visited[v] = False
-        stack =[] 
-  
-        # Call the recursive helper function to store Topological 
-        # Sort starting from all vertices one by one 
-        for i in self.graph: 
-            if visited[i] < 0 and i in self.graph: 
-                self.topologicalSortUtil(i,visited,stack,1) 
-  
-        # Print contents of stack 
-        return stack , visited
-
-
 
 def dictify(r, root=True):
     if root:
@@ -84,7 +39,10 @@ def dictify(r, root=True):
 
 class CacheAnalyser:
 
-    def __init__(self, distro='kinetic', tags=['lcas']):
+    def __init__(self, distro='kinetic', tags=['lcas'],
+        analyse_release=True, analyse_source=True,
+        repo_whitelist=None
+    ):
         self._distro_name = distro
         self._distro = get_distro(distro)
         self._pkgs = {}
@@ -113,9 +71,6 @@ class CacheAnalyser:
         self._repositories = defaultdict(lambda: deepcopy(__repo_template))
         self._pkgs = defaultdict(lambda: deepcopy(__pkg_template))
 
-
-        self._repo_deps = {}
-        self._pkg2repo = defaultdict(lambda: None)
         self._index = get_index(get_index_url())
         self._distributions = get_distribution_files(self._index, distro)
 
@@ -133,31 +88,34 @@ class CacheAnalyser:
                 self._release_platform
                 )
             )
+        
+        self._analyse_release = analyse_release
+        self._analyse_source = analyse_source
+        self._repo_whitelist = repo_whitelist
 
         self._distro_repositories = self._distribution.repositories
         self._released_packages_set = set(self._distribution.release_packages)
-        self.pkg_requires_graph = Graph()
-        self.rep_requires_graph = Graph()                
-        self.pkg_required_by_graph = Graph()
-        self.rep_required_by_graph = Graph()                
 
     def _analyse_repos(self):
         tmp_dir = mkdtemp()
         try:
             for r, sg in self._distro_repositories.items():
+                if self._repo_whitelist:
+                    if r not in self._repo_whitelist:
+                        continue
                 try:
                     info('analysing repository %s' % r)
-                    if sg.release_repository:  # released
+                    if sg.release_repository and self._analyse_release:  # released
                         self._repositories[r]['packages'] = self._analyse_released_repo(sg)
                         self._repositories[r]['status'] = 'released'
-                        info('  repository %s is released with packages %s' % (
-                            r, pformat(list(self._repositories[r]['packages']))))
-                    elif sg.source_repository:  # not released but source available
+                        info('-> repository %s is RELEASED as version %s with packages "%s"' % (
+                            r, sg.release_repository.version, ', '.join(list(self._repositories[r]['packages']))))
+                    elif sg.source_repository and self._analyse_source:  # not released but source available
                         if sg.source_repository.type == 'git':
                             self._repositories[r]['packages'] = self._analyse_non_released_repo(sg, tmp_dir)
                             self._repositories[r]['status'] = 'source'
-                            info('  repository %s is non-released with packages %s' % (
-                                r, pformat(list(self._repositories[r]['packages']))))
+                            info('-> repository %s is NON-released with packages "%s"' % (
+                                r, ', '.join(list(self._repositories[r]['packages']))))
                         else:
                             warning('skipping source repository %s as it is not git' % r)
                     if sg.source_repository:
@@ -173,7 +131,7 @@ class CacheAnalyser:
         finally:
             rmtree(tmp_dir)
         self._analyse_deps()
-        info(pformat(dict(self._repositories)))
+        pprint(dict(self._repositories))
 
     def _analyse_deps(self):
         for p in self._pkgs:
@@ -229,19 +187,6 @@ class CacheAnalyser:
 
 
             _pkg[p] = e 
-            # only create graph for packages in this distribution
-            for d in deps.intersection(self._released_packages_set):
-                self.pkg_requires_graph.addEdge(p, d)
-                self.pkg_required_by_graph.addEdge(d, p)
-                if self._distribution.release_packages[d].repository_name != self._distribution.release_packages[p].repository_name:
-                    self.rep_requires_graph.addEdge(
-                        self._distribution.release_packages[p].repository_name,
-                        self._distribution.release_packages[d].repository_name,
-                    )
-                    self.rep_required_by_graph.addEdge(
-                        self._distribution.release_packages[d].repository_name,
-                        self._distribution.release_packages[p].repository_name,
-                    )
         return _pkg
 
     def _analyse_non_released_repo(self, sg, tmp_dir):
@@ -281,6 +226,52 @@ class CacheAnalyser:
             '--shallow-submodules', '--recurse-submodules',
             '-b', branch, url, name], cwd=dir)
 
+    def generate_graph(self):
+        dot = pgv.AGraph(label="<<B>Dependency Graph of Repositories</B>>",
+                         directed=True,
+                         strict=True,
+                         splines='True',
+                         compound=True,
+                         rankdir='TB',
+                         concentrate=False)
+
+        for repo_name, repo in self._repositories.items():
+            pstr = ''
+            for pname, pkg in repo['packages'].items():
+                # pstr += '  <I>%s </I>(%s)<BR ALIGN="LEFT"/>' % (
+                #     pname, ', '.join(pkg['package']['maintainers']))
+                pstr += '  <I>%s</I><BR ALIGN="LEFT"/>' % (
+                    pname)
+            pstr += ''
+            # maintainers = ''
+            # for pn in sg['packages']:
+            #     p = sg['packages']
+            #     for m in p['maintainers']:
+            #         maintainers += '  ' + pn + ': ' + m + '<br align="left"/>'
+            #     if p['release_status'] is None:
+            #         nc = 'red'
+            #     else:
+            #         if p['release_status'] == 'release':
+            #             nc = 'green'
+            #         else:
+            #             nc = 'yellow'
+            #dot.add_node(k, label='<<I>'+k.upper()+'</I><br align="left"/>'+maintainers+'>', color=nc)
+            label = ('<<B>%s</B><BR ALIGN="LEFT"/>'
+                        '<FONT POINT-SIZE="8">%s</FONT>>' %
+                        (repo_name.lower(), pstr))
+
+            if repo['status'] == 'released':
+                node_color = 'green'
+            else:
+                node_color = 'red'
+
+            dot.add_node(repo_name,
+                         label=label,
+                         color=node_color)
+
+            for dr in repo['requires_repositories']:
+                dot.add_edge(repo_name, dr, weight=10, constraint=True)
+        return dot
 
 ####################
 
@@ -588,25 +579,35 @@ class CacheAnalyser:
 def main():
     parser = argparse.ArgumentParser(
         description='analyse a rosdistro',
-        epilog='(c) Marc Hanheide 2017',
+        epilog='(c) Marc Hanheide 2019',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        '--distro',
+        '--distro', '-d',
         help='name of ROS distro, default: kinetic',
         default='kinetic'
     )
     parser.add_argument(
-        '--tags',
+        '--tags', '-t',
         help='list of repository tags, space-separated',
         default='lcas'
+    )
+    parser.add_argument(
+        '--repo-whitelist', '-r',
+        help='list of whitelisted repositories, space-separated. default: all',
+        default=None
     )
     args = parser.parse_args()
 
     _tags = args.tags.split(' ') if len(args.tags)>0 else []
+    _repo_whitelist = args.repo_whitelist.split(' ') if args.repo_whitelist else None
     #print _orgas
-    ca = CacheAnalyser(distro=args.distro, tags=_tags)
+    ca = CacheAnalyser(distro=args.distro, tags=_tags, repo_whitelist=_repo_whitelist)
     ca._analyse_repos()
+    dot = ca.generate_graph()
+    dot.layout(prog='dot')
+    dot.draw('repos-%s.png' % args.distro)
+
     #ca.analyse_non_released_repos()
     return
     #ca.analyse('strands_apps')
