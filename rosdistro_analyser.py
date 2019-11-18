@@ -135,7 +135,6 @@ class CacheAnalyser:
         finally:
             rmtree(tmp_dir)
         self._analyse_deps()
-        pprint(dict(self._repositories))
 
     def _analyse_deps(self):
         for p in self._pkgs:
