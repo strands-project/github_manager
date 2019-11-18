@@ -5,6 +5,7 @@ from pprint import pprint, pformat
 from sys import stderr
 from shutil import rmtree
 from copy import deepcopy
+from yaml import load, dump
 
 from rosinstall_generator.distro import get_distro, get_package_names
 from rosinstall_generator.distro import get_recursive_dependencies, get_release_tag
@@ -185,7 +186,6 @@ class CacheAnalyser:
             px = self.parse_package_xml(p)['package']
             e.update(self._extract_from_package_xml(px))
 
-
             _pkg[p] = e 
         return _pkg
 
@@ -197,14 +197,16 @@ class CacheAnalyser:
                 sg.source_repository.url,
                 sg.source_repository.version,
                 sg.name, tmp_dir)
+        except Exception:
+            exception('exception when trying to checkout repository %s. Carrying on regardless.' % sg.name)
+        try:
             pkgs = [
                 p[1] for p in topological_order.topological_order(
                     join(tmp_dir, sg.name))
                     ]
-            pkgs_names = [p.name for p in pkgs]
         except Exception:
-            exception('exception when trying to analyse repository %s' % sg.name)
-            return
+            exception('exception when trying to analyse repository %s, returning [].' % sg.name)
+            return _pkgs
 
         for pkg in pkgs:
             e = {
@@ -222,9 +224,23 @@ class CacheAnalyser:
         return _pkgs
 
     def __checkout(self, url, branch, name, dir):
-        check_call(["git", "clone", '--depth', '1', 
-            '--shallow-submodules', '--recurse-submodules',
+        check_call(["git", "clone", '--depth', '1',
+            '--recurse-submodules',
             '-b', branch, url, name], cwd=dir)
+
+    def write(self, filename):
+        with open(filename, 'w') as f:
+            doc = {
+                'repositories': dict(self._repositories),
+                'pkgs': dict(self._pkgs)
+            }
+            f.write(dump(doc))
+
+    def load(self, filename):
+        with open(filename, 'r') as f:
+            doc = load(f.read())
+            self._repositories.update(doc['repositories'])
+            self._pkgs.update(doc['pkgs'])
 
     def generate_graph(self):
         dot = pgv.AGraph(label="<<B>Dependency Graph of Repositories</B>>",
@@ -232,17 +248,22 @@ class CacheAnalyser:
                          strict=True,
                          splines='True',
                          compound=True,
+                         ratio='compress',
                          rankdir='TB',
-                         concentrate=False)
+                         concentrate=True)
+        released = dot.add_subgraph(name='released')
+        non_released = dot.add_subgraph(name='non_released')
 
         for repo_name, repo in self._repositories.items():
+            info('generating node %s' % repo_name)
             pstr = ''
-            for pname, pkg in repo['packages'].items():
+            for pname in sorted(repo['packages']):
+                pkg = repo['packages'][pname]
                 # pstr += '  <I>%s </I>(%s)<BR ALIGN="LEFT"/>' % (
                 #     pname, ', '.join(pkg['package']['maintainers']))
                 pstr += '  <I>%s</I><BR ALIGN="LEFT"/>' % (
                     pname)
-            pstr += ''
+            pstr += ' '
             # maintainers = ''
             # for pn in sg['packages']:
             #     p = sg['packages']
@@ -256,21 +277,38 @@ class CacheAnalyser:
             #         else:
             #             nc = 'yellow'
             #dot.add_node(k, label='<<I>'+k.upper()+'</I><br align="left"/>'+maintainers+'>', color=nc)
-            label = ('<<B>%s</B><BR ALIGN="LEFT"/>'
-                        '<FONT POINT-SIZE="8">%s</FONT>>' %
-                        (repo_name.lower(), pstr))
-
+            label = (
+                '<<B>%s</B>'
+                '<BR ALIGN="LEFT"/>'
+                '<FONT POINT-SIZE="8">%s</FONT>>' %
+                (repo_name.lower(), pstr))
+            tooltip = (
+                'externals dependencies: %s' %
+                (', '.join(sorted(repo['external_dependencies']))))
             if repo['status'] == 'released':
                 node_color = 'green'
             else:
                 node_color = 'red'
-
             dot.add_node(repo_name,
-                         label=label,
-                         color=node_color)
+                        label=label,
+                        color=node_color,
+                        shape='folder',
+                        tooltip=tooltip,
+                        URL=repo['url'])
 
             for dr in repo['requires_repositories']:
-                dot.add_edge(repo_name, dr, weight=10, constraint=True)
+                if self._repositories[dr]['status'] == 'released':
+                    edge_color = 'green'
+                    weight = 1000
+                else:
+                    edge_color = 'red'
+                    weight = 1
+
+                dot.add_edge(
+                    repo_name, dr, color=edge_color, weight=weight,
+                    constraint=True,
+                    URL=self._repositories[dr]['url'],
+                    edgetooltip=("%s -> %s" % (repo_name, dr)))
         return dot
 
 ####################
@@ -597,16 +635,35 @@ def main():
         help='list of whitelisted repositories, space-separated. default: all',
         default=None
     )
+    parser.add_argument(
+        '--write', '-w',
+        help='write the gathered data to a file. default: None',
+        default=None
+    )
+    parser.add_argument(
+        '--load', '-l',
+        help='load previous data from a file. default: None',
+        default=None
+    )
     args = parser.parse_args()
 
     _tags = args.tags.split(' ') if len(args.tags)>0 else []
     _repo_whitelist = args.repo_whitelist.split(' ') if args.repo_whitelist else None
     #print _orgas
-    ca = CacheAnalyser(distro=args.distro, tags=_tags, repo_whitelist=_repo_whitelist)
-    ca._analyse_repos()
+    ca = CacheAnalyser(
+        distro=args.distro, tags=_tags, repo_whitelist=_repo_whitelist)
+
+    if args.load:
+        ca.load(args.load)
+    else:
+        ca._analyse_repos()
+    if args.write:
+        ca.write(args.write)
     dot = ca.generate_graph()
     dot.layout(prog='dot')
+    dot.draw('repos-%s.svg' % args.distro)
     dot.draw('repos-%s.png' % args.distro)
+    dot.draw('repos-%s.svg' % args.distro)
 
     #ca.analyse_non_released_repos()
     return
