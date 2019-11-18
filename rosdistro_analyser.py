@@ -511,12 +511,10 @@ def main():
     dot.layout(prog='dot')
     dot.draw('repos-%s.svg' % args.distro)
     dot.draw('repos-%s.pdf' % args.distro)
-    #dot.draw('repos-%s.png' % args.distro)
-    #dot.draw('repos-%s.svg' % args.distro)
+    dot.draw('repos-%s.png' % args.distro)
+
     print(ca.preamble())
     print(ca.generate_markdown_repos())
-    #ca.analyse_non_released_repos()
-    return
 
 if __name__ == "__main__":
     basicConfig(level=INFO)
