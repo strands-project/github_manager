@@ -54,7 +54,9 @@ class CacheAnalyser:
             'packages': {},
             'type': None,
             'url': None,
-            'version': 'master',
+            'release_url': None,
+            'version': None,
+            'release_version': None,
             'requires_repositories': set([]),
             'required_by_repositories': set([]),
             'external_dependencies': set([]),
@@ -66,6 +68,7 @@ class CacheAnalyser:
             'name': None,
             'authors': [],
             'maintainers': [],
+            'url': '',
             'description': '',
             'license': 'unknown',
             'status': 'unknown',
@@ -112,6 +115,8 @@ class CacheAnalyser:
                     if sg.release_repository and self._analyse_release:  # released
                         self._repositories[r]['packages'] = self._analyse_released_repo(sg)
                         self._repositories[r]['status'] = 'released'
+                        self._repositories[r]['release_url'] = sg.release_repository.url
+                        self._repositories[r]['release_version'] = sg.release_repository.version
                         info('-> repository %s is RELEASED as version %s with packages "%s"' % (
                             r, sg.release_repository.version, ', '.join(list(self._repositories[r]['packages']))))
                     elif sg.source_repository and self._analyse_source:  # not released but source available
@@ -172,7 +177,12 @@ class CacheAnalyser:
                             [a['_text']
                                 for a in px['license']])
                         if 'license' in px
-                        else '')
+                        else ''),
+            'url': (' '.join(
+                            [a['_text']
+                                for a in px['url']])
+                        if 'url' in px
+                        else None)
         }
 
     def _analyse_released_repo(self, sg):
@@ -369,27 +379,33 @@ class CacheAnalyser:
         repo = self._repositories[repo_name]
         str = '---\n\n# %s\n' % repo_name
 
+        if repo['release_version'] and repo['release_url']:
+            str += '<img src="ubuntu.svg" height="16px"/> released version: [`%s`](%s)\n\n' % (
+                repo['release_version'], repo['release_url']
+            )
+
         if repo['type'] == 'git':
             if repo['jenkins_job']:
-                str += 'Source Code: %s (branch: `%s`) [![buildStatus](%s/badge/icon)](%s)\n\n' % (
+                str += '<img src="git.svg" height="16px"/> source code: %s (branch: `%s`) [![buildStatus](%s/badge/icon)](%s)\n\n' % (
                     repo['url'], repo['version'], repo['jenkins_job'], repo['jenkins_job']
                 )
             else:
-                str += 'Source Code: %s (branch: `%s`)\n\n' % (
+                str += '<img src="git.svg" height="16px"/> source code: %s (branch: `%s`)\n\n' % (
                     repo['url'], repo['version']
                 )
 
-        str += '\n__`rosinstall` definition:__\n'
-        str += '\n```\n%s' % (
-            self.generate_rosinstall(repo_name)
-        )
-        if repo['requires_repositories']:
-            for d in repo['requires_repositories']:
-                if self._repositories[d]['status'] != 'released':
-                    str += '%s' % (
-                        self.generate_rosinstall(d)
-                    )
-        str += '```\n'
+            if repo['status'] == 'source':
+                str += '\n__`rosinstall` definition__ (including any unreleased dependencies):\n'
+                str += '\n```\n%s' % (
+                    self.generate_rosinstall(repo_name)
+                )
+                if repo['requires_repositories']:
+                    for d in repo['requires_repositories']:
+                        if self._repositories[d]['status'] != 'released':
+                            str += '%s' % (
+                                self.generate_rosinstall(d)
+                            )
+                str += '```\n'
 
         if repo['requires_repositories']:
             str += '\n__depends on the following repositories:__\n\n'
