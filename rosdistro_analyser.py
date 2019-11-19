@@ -178,11 +178,7 @@ class CacheAnalyser:
                                 for a in px['license']])
                         if 'license' in px
                         else ''),
-            'url': (' '.join(
-                            [a['_text']
-                                for a in px['url']])
-                        if 'url' in px
-                        else None)
+            'url': (px['url'][0]['_text'] if '_text' in px['url'][0] else None) if 'url' in px else None
         }
 
     def _analyse_released_repo(self, sg):
@@ -222,12 +218,14 @@ class CacheAnalyser:
             return _pkgs
 
         for pkg in pkgs:
+            #print pkg
             e = {
                 'name': pkg.name,
                 'status': 'source',
                 'deps': set([str(d.name) for d in pkg.build_depends]
                             + [str(d.name) for d in pkg.exec_depends]),
                 'repository': sg.name,
+                'url': pkg.urls[0] if pkg.urls else None,
                 'description': pkg.description,
                 'authors': [str(a.name) for a in pkg.authors],
                 'maintainers': [str(a.name) for a in pkg.maintainers],
@@ -335,24 +333,14 @@ class CacheAnalyser:
         return dot
 
     def generate_md_package(self, pkg):
-        if pkg['status'] == 'released':
-            s = '| [`%s`](apt://ros-%s-%s): _%s_ | %s | %s | %s |\n' % (
-                pkg['name'],
-                self._distro_name,
-                pkg['name'].replace('_', '-'),
-                " ".join(pkg['description'].split()) if 'description' in pkg else 'n/a',
-                ', '.join(pkg['maintainers']),
-                ', '.join(pkg['authors']),
-                pkg['license']
-            )
-        else:
-            s = '| `%s`: _%s_ | %s | %s | %s |\n' % (
-                pkg['name'],
-                " ".join(pkg['description'].split()) if 'description' in pkg else 'n/a',
-                ', '.join(pkg['maintainers']),
-                ', '.join(pkg['authors']),
-                pkg['license']
-            )
+        s = '| [`%s`](%s): _%s_ | %s | %s | %s |\n' % (
+            pkg['name'],
+            pkg['url'] if pkg['url'] else '',
+            " ".join(pkg['description'].split()) if 'description' in pkg else 'n/a',
+            ', '.join(pkg['maintainers']),
+            ', '.join(pkg['authors']),
+            pkg['license']
+        )
         # str  = '  * Depends on pkgs: '
         # for d in pkg['depends']:
         #     str += '[`%s`](#package-%s) ' % (d, d)
@@ -380,22 +368,30 @@ class CacheAnalyser:
         str = '---\n\n# %s\n' % repo_name
 
         if repo['release_version'] and repo['release_url']:
-            str += '<img src="ubuntu.svg" height="16px"/> released version: [`%s`](%s)\n\n' % (
+            str += '## Install from released Ubuntu packages\n'
+            str += 'Install using `apt install %s`.\n\n' % (
+                ' '.join(
+                    ['ros-%s-%s' % (
+                        self._distro_name, pname.replace('_','-')
+                    ) for pname in repo['packages']])
+            )
+            str += '<img src="ubuntu.svg" height="12px"/> released version: **`%s`** (via release repository: %s)\n\n' % (
                 repo['release_version'], repo['release_url']
             )
 
         if repo['type'] == 'git':
             if repo['jenkins_job']:
-                str += '<img src="git.svg" height="16px"/> source code: %s (branch: `%s`) [![buildStatus](%s/badge/icon)](%s)\n\n' % (
+                str += '<img src="git.svg" height="12px"/> source code: %s (branch: `%s`) [![buildStatus](%s/badge/icon)](%s)\n\n' % (
                     repo['url'], repo['version'], repo['jenkins_job'], repo['jenkins_job']
                 )
             else:
-                str += '<img src="git.svg" height="16px"/> source code: %s (branch: `%s`)\n\n' % (
+                str += '<img src="git.svg" height="12px"/> source code: %s (branch: `%s`)\n\n' % (
                     repo['url'], repo['version']
                 )
 
             if repo['status'] == 'source':
-                str += '\n__`rosinstall` definition__ (including any unreleased dependencies):\n'
+                str += '\n## Install from source\n'
+                str += '\n`rosinstall` definition (including any unreleased dependencies), to be used with [`wstool`](http://wiki.ros.org/wstool):\n'
                 str += '\n```\n%s' % (
                     self.generate_rosinstall(repo_name)
                 )
@@ -408,12 +404,13 @@ class CacheAnalyser:
                 str += '```\n'
 
         if repo['requires_repositories']:
-            str += '\n__depends on the following repositories:__\n\n'
+            str += '\n## Repository dependencies\n'
+            str += 'depends on these other repositories: '
             str += ', '.join(['[`%s`](#%s)\n' % (d, d) for d in repo['requires_repositories']])
         str += '\n\n'
 
 
-        str += '\n__included packages:__\n\n'
+        str += '\n## Included packages\n\n'
         tablehead = '| package | maintainer | authors | licence |\n'
         tableline = '| ------- | ---------- | ------- | ------- |\n'
         str += tablehead + tableline
